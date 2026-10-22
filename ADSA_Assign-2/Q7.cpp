@@ -1,54 +1,142 @@
-// Q7: Minimum spanning tree that must contain a given set of K mandatory roads.
-// 1) Union all mandatory roads first. If one of them joins two cities that are already connected,
-//    the mandatory roads contain a cycle, so no spanning TREE can contain them all -> -1.
-// 2) Run Kruskal on the remaining roads in increasing weight order (cut property: among trees that
-//    contain the mandatory forest, greedily adding the lightest safe edge is optimal).
-// 3) If the result does not connect all N cities, the graph has no spanning tree -> -1.
-// Time: O(M log(M+1)) for sorting + O((N+M) alpha(N)) for the union-find operations.
+// Q7 : Mandatory roads in a minimum spanning tree.
+//
+// Problem: N cities, M possible roads (each with a cost), and K of these roads are MANDATORY.
+// Find the cheapest spanning tree (connects all cities, no cycles) that contains every mandatory road,
+// or report -1 if no such tree exists.
+//
+// Idea (Kruskal's algorithm with a head start):
+//   1. First take ALL mandatory roads. If one of them joins two cities that are already connected, the
+//      mandatory roads contain a cycle, and no tree can contain a cycle  -> answer -1.
+//   2. Then run normal Kruskal on the other roads: look at them from cheapest to most expensive and take
+//      a road only if it joins two cities that are not connected yet.
+//   3. If at the end we do not have exactly N-1 roads, the graph cannot be connected -> answer -1.
+// A disjoint set union (DSU) tells us in almost constant time whether two cities are already connected.
+// Time: sorting O(M log M) plus DSU work O((N + M) * alpha(N)).
+//
+// Example from the assignment: N=5, M=7, mandatory roads number 1 and 3.
+//   road 1: 1-2 (4)   road 2: 1-3 (2)   road 3: 2-3 (1)   road 4: 2-4 (5)
+//   road 5: 3-4 (3)   road 6: 4-5 (2)   road 7: 3-5 (6)
+//   step 1: take road 1 (4) and road 3 (1): cities 1, 2, 3 are connected, cost so far 5
+//   step 2: remaining roads by cost: 2 (1-3), 6 (4-5), 5 (3-4), 4, 7
+//           road 2 (1-3): 1 and 3 are already connected -> skip
+//           road 6 (4-5): new -> take (cost 2)       road 5 (3-4): new -> take (cost 3)
+//   we now have 4 = N-1 roads, total 4 + 1 + 2 + 3 = 10
+
 #include <iostream>
 #include <vector>
 #include <algorithm>
 using namespace std;
-typedef long long ll;
 
-struct Edge { int u, v; ll w; };
-bool byWeight(const Edge &a, const Edge &b) { return a.w < b.w; }
+struct Road {
+    int u;
+    int v;
+    long long cost;
+};
 
-vector<int> parent, setSize;
-int findRoot(int x) {
-    int r = x; while (parent[r] != r) r = parent[r];
-    while (parent[x] != r) { int next = parent[x]; parent[x] = r; x = next; }
-    return r;
+// Comparison used by sort(): the road with the smaller cost comes first.
+bool cheaperFirst(const Road &a, const Road &b) {
+    return a.cost < b.cost;
 }
-bool unite(int a, int b) {
-    a = findRoot(a); b = findRoot(b);
-    if (a == b) return false;
-    if (setSize[a] < setSize[b]) swap(a, b);
-    parent[b] = a; setSize[a] += setSize[b];
+
+// ---- Disjoint set union (see Q6 for the same structure) ----
+vector<int> groupParent;
+vector<int> groupSize;
+
+// Leader of x's group, with path compression.
+int findLeader(int x) {
+    int leader = x;
+    while (groupParent[leader] != leader) {
+        leader = groupParent[leader];
+    }
+    while (groupParent[x] != leader) {
+        int next = groupParent[x];
+        groupParent[x] = leader;
+        x = next;
+    }
+    return leader;
+}
+
+// Join the groups of a and b (smaller below bigger). Returns false if they were already together.
+bool joinGroups(int a, int b) {
+    a = findLeader(a);
+    b = findLeader(b);
+    if (a == b) {
+        return false;
+    }
+    if (groupSize[a] < groupSize[b]) {
+        swap(a, b);
+    }
+    groupParent[b] = a;
+    groupSize[a] += groupSize[b];
     return true;
 }
 
 int main() {
-    ios::sync_with_stdio(false); cin.tie(NULL);
-    int N, M, K; if (!(cin >> N >> M >> K)) return 0;
-    vector<Edge> roads(M);
-    for (int i = 0; i < M; i++) cin >> roads[i].u >> roads[i].v >> roads[i].w;
-    vector<char> mandatory(M, 0);
-    for (int i = 0; i < K; i++) { int idx; cin >> idx; mandatory[idx - 1] = 1; }   // 1-based indices
+    ios::sync_with_stdio(false);
+    cin.tie(NULL);
 
-    parent.resize(N + 1); setSize.assign(N + 1, 1);
-    for (int i = 0; i <= N; i++) parent[i] = i;
-    ll total = 0; int edgesUsed = 0;
-    for (int i = 0; i < M; i++) if (mandatory[i]) {
-        if (!unite(roads[i].u, roads[i].v)) { cout << -1 << '\n'; return 0; }     // mandatory cycle
-        total += roads[i].w; edgesUsed++;
+    int N, M, K;
+    if (!(cin >> N >> M >> K)) {
+        return 0;
     }
-    vector<Edge> optional;
-    for (int i = 0; i < M; i++) if (!mandatory[i]) optional.push_back(roads[i]);
-    sort(optional.begin(), optional.end(), byWeight);
-    for (size_t i = 0; i < optional.size() && edgesUsed < N - 1; i++)
-        if (unite(optional[i].u, optional[i].v)) { total += optional[i].w; edgesUsed++; }
-    if (edgesUsed != N - 1) cout << -1 << '\n';                                   // graph not connected
-    else cout << total << '\n';
+
+    // read all roads; road number i + 1 is stored at index i
+    vector<Road> roads(M);
+    for (int i = 0; i < M; i++) {
+        cin >> roads[i].u >> roads[i].v >> roads[i].cost;
+    }
+    // mark the mandatory roads (when K = 0 there is no last line to read)
+    vector<char> isMandatory(M, 0);
+    for (int i = 0; i < K; i++) {
+        int roadNumber;
+        cin >> roadNumber;                      // roads are numbered from 1 in the input
+        isMandatory[roadNumber - 1] = 1;
+    }
+
+    // at the start every city is a group of its own
+    groupParent.resize(N + 1);
+    groupSize.assign(N + 1, 1);
+    for (int i = 0; i <= N; i++) {
+        groupParent[i] = i;
+    }
+
+    long long totalCost = 0;
+    int roadsTaken = 0;
+
+    // step 1: the mandatory roads
+    for (int i = 0; i < M; i++) {
+        if (isMandatory[i]) {
+            if (!joinGroups(roads[i].u, roads[i].v)) {
+                cout << -1 << '\n';             // two mandatory roads close a cycle
+                return 0;
+            }
+            totalCost += roads[i].cost;
+            roadsTaken++;
+        }
+    }
+
+    // step 2: the other roads, cheapest first. (We can stop as soon as N-1 roads are chosen,
+    // because a tree on N cities has exactly N-1 roads.)
+    vector<Road> optionalRoads;
+    for (int i = 0; i < M; i++) {
+        if (!isMandatory[i]) {
+            optionalRoads.push_back(roads[i]);
+        }
+    }
+    sort(optionalRoads.begin(), optionalRoads.end(), cheaperFirst);
+
+    for (size_t i = 0; i < optionalRoads.size() && roadsTaken < N - 1; i++) {
+        if (joinGroups(optionalRoads[i].u, optionalRoads[i].v)) {
+            totalCost += optionalRoads[i].cost;
+            roadsTaken++;
+        }
+    }
+
+    // step 3: a spanning tree has exactly N-1 roads
+    if (roadsTaken != N - 1) {
+        cout << -1 << '\n';                     // the cities cannot all be connected
+    } else {
+        cout << totalCost << '\n';
+    }
     return 0;
 }
